@@ -8,56 +8,49 @@ export default function InstaDownloader() {
   const [error, setError] = useState('');
 
   const handleDownload = async () => {
-    if (!url.trim()) {
-      setError('Please enter a valid Instagram URL');
-      return;
+  if (!url.trim()) {
+    setError('Please enter a valid Instagram URL');
+    return;
+  }
+
+  const instaRegex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|stories|tv)\/([A-Za-z0-9_-]+)/;
+  if (!instaRegex.test(url)) {
+    setError('Please enter a valid Instagram post, reel, or story URL');
+    return;
+  }
+
+  setLoading(true);
+  setError('');
+  setResult(null);
+
+  try {
+    // Use our API proxy instead of direct API call
+    const response = await fetch(`/api/download?url=${encodeURIComponent(url)}`);
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status}`);
     }
 
-    const instaRegex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|stories|tv)\/([A-Za-z0-9_-]+)/;
-    if (!instaRegex.test(url)) {
-      setError('Please enter a valid Instagram post, reel, or story URL');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setResult(null);
-
-    try {
-      const apiUrl = `https://instagram-reels-downloader-api.p.rapidapi.com/download?url=${encodeURIComponent(url)}`;
-      
-      const response = await fetch(apiUrl, {
-        method: 'GET',
-        headers: {
-          'x-rapidapi-host': 'instagram-reels-downloader-api.p.rapidapi.com',
-          'x-rapidapi-key': '3236d99f89mshf7c802731a1dca9p1b2c97jsn02bdb6c211f7'
-        }
+    const data = await response.json();
+    
+    if (data.success && data.data) {
+      setResult({
+        downloadUrl: data.data.download_url || data.data.video_url || data.data.image_url,
+        thumbnail: data.data.thumbnail_url,
+        username: data.data.username,
+        caption: data.data.caption,
+        type: data.data.type || 'media'
       });
-
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.success && data.data) {
-        setResult({
-          downloadUrl: data.data.download_url || data.data.video_url || data.data.image_url,
-          thumbnail: data.data.thumbnail_url,
-          username: data.data.username,
-          caption: data.data.caption,
-          type: data.data.type || 'media'
-        });
-      } else {
-        setError(data.message || 'Could not download media. Please try again.');
-      }
-    } catch (err) {
-      console.error('Error:', err);
-      setError(`Failed to download: ${err.message}. Please check the URL and try again.`);
-    } finally {
-      setLoading(false);
+    } else {
+      setError(data.message || 'Could not download media. Please try again.');
     }
-  };
+  } catch (err) {
+    console.error('Error:', err);
+    setError(`Failed to download: ${err.message}`);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const downloadFile = (url, filename) => {
     const link = document.createElement('a');
