@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Link2, Loader2, CheckCircle, XCircle, Video, ImageIcon } from 'lucide-react';
+import { Download, Link2, Loader2, CheckCircle, XCircle, Video, Image, RefreshCw, Volume2 } from 'lucide-react';
 
 export default function InstaDownloader() {
   const [url, setUrl] = useState('');
@@ -7,60 +7,146 @@ export default function InstaDownloader() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
+  const validateInstagramUrl = (url) => {
+    const instaRegex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|stories|tv)\/([A-Za-z0-9_-]+)/;
+    return instaRegex.test(url);
+  };
+
   const handleDownload = async () => {
-  if (!url.trim()) {
-    setError('Please enter a valid Instagram URL');
-    return;
-  }
-
-  const instaRegex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|stories|tv)\/([A-Za-z0-9_-]+)/;
-  if (!instaRegex.test(url)) {
-    setError('Please enter a valid Instagram post, reel, or story URL');
-    return;
-  }
-
-  setLoading(true);
-  setError('');
-  setResult(null);
-
-  try {
-    // Use our API proxy instead of direct API call
-    const response = await fetch(`/api/download?url=${encodeURIComponent(url)}`);
-
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status}`);
+    if (!url.trim()) {
+      setError('Please enter a valid Instagram URL');
+      return;
     }
 
-    const data = await response.json();
+    if (!validateInstagramUrl(url)) {
+      setError('Please enter a valid Instagram post, reel, or story URL');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setResult(null);
+
+    try {
+      // Use the working Instagram Reels Downloader API
+      const apiResponse = await fetch(
+        `https://instagram-reels-downloader-api.p.rapidapi.com/download?url=${encodeURIComponent(url)}`,
+        {
+          method: 'GET',
+          headers: {
+            'x-rapidapi-key': '3236d99f89mshf7c802731a1dca9p1b2c97jsn02bdb6c211f7',
+            'x-rapidapi-host': 'instagram-reels-downloader-api.p.rapidapi.com'
+          }
+        }
+      );
+
+      if (!apiResponse.ok) {
+        throw new Error(`API Error: ${apiResponse.status}`);
+      }
+
+      const data = await apiResponse.json();
+      console.log('API Response:', data);
+
+      // Check if the API call was successful
+      if (!data.success || data.error) {
+        throw new Error(data.message || 'Failed to download content');
+      }
+
+      // Parse the response based on the actual structure
+      if (data.data && data.data.medias && data.data.medias.length > 0) {
+        const mediaData = data.data;
+        
+        // Find video media (primary content)
+        const videoMedia = mediaData.medias.find(media => media.type === 'video');
+        const audioMedia = mediaData.medias.find(media => media.type === 'audio');
+        
+        if (videoMedia) {
+          setResult({
+            downloadUrl: videoMedia.url,
+            thumbnail: videoMedia.thumbnail || mediaData.thumbnail,
+            username: mediaData.author || mediaData.owner?.username || '',
+            caption: mediaData.title || '',
+            type: 'video',
+            quality: videoMedia.quality,
+            duration: videoMedia.duration,
+            likeCount: mediaData.like_count,
+            location: mediaData.location?.name,
+            audioUrl: audioMedia?.url,
+            allMedia: mediaData.medias // Store all media for multiple quality options
+          });
+        } else {
+          throw new Error('No video content found in the response');
+        }
+      } else {
+        throw new Error('No media found in the response');
+      }
+
+    } catch (err) {
+      console.error('Download error:', err);
+      setError(`Failed to download: ${err.message}. Please try again or use a different post.`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadMedia = async (mediaUrl, filename = 'instagram_video') => {
+    try {
+      // Method 1: Direct download using fetch and blob (for same-origin or CORS-enabled URLs)
+      try {
+        const response = await fetch(mediaUrl);
+        if (response.ok) {
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = `${filename}_${Date.now()}.mp4`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          // Clean up blob URL
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+          return;
+        }
+      } catch (fetchError) {
+        console.log('Direct download failed, trying alternative method...');
+      }
+
+      // Method 2: Open in new tab for user to manually download
+      const newTab = window.open(mediaUrl, '_blank');
+      if (!newTab) {
+        setError('Popup blocked! Please allow popups for this site and try again.');
+      }
+      
+    } catch (error) {
+      console.error('Download failed:', error);
+      // Final fallback
+      window.open(mediaUrl, '_blank');
+    }
+  };
+
+  const downloadAudio = async (audioUrl) => {
+    if (!audioUrl) return;
     
-    if (data.success && data.data) {
-      setResult({
-        downloadUrl: data.data.download_url || data.data.video_url || data.data.image_url,
-        thumbnail: data.data.thumbnail_url,
-        username: data.data.username,
-        caption: data.data.caption,
-        type: data.data.type || 'media'
-      });
-    } else {
-      setError(data.message || 'Could not download media. Please try again.');
+    try {
+      const newTab = window.open(audioUrl, '_blank');
+      if (!newTab) {
+        setError('Popup blocked! Please allow popups to download audio.');
+      }
+    } catch (error) {
+      console.error('Audio download failed:', error);
+      window.open(audioUrl, '_blank');
     }
-  } catch (err) {
-    console.error('Error:', err);
-    setError(`Failed to download: ${err.message}`);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
-  const downloadFile = (url, filename) => {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename || 'instagram_media';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('URL copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
   };
 
   return (
@@ -123,64 +209,137 @@ export default function InstaDownloader() {
 
           {/* Error Message */}
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg flex items-start gap-3 animate-fade-in">
-              <XCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-red-800 font-semibold">Oops! Something went wrong</p>
-                <p className="text-red-600 text-sm mt-1">{error}</p>
+            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+              <div className="flex items-start gap-3">
+                <XCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-red-800 font-semibold">Download Failed</p>
+                  <p className="text-red-600 text-sm mt-1">{error}</p>
+                </div>
               </div>
             </div>
           )}
 
           {/* Result Section */}
           {result && (
-            <div className="mb-6 animate-fade-in">
+            <div className="mb-6">
               <div className="p-5 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl">
                 <div className="flex items-start gap-3 mb-4">
                   <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-green-800 font-bold text-lg">Ready to Download!</p>
-                    {result.username && (
-                      <p className="text-green-700 text-sm mt-1">
-                        By: @{result.username}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-2 mt-2">
-                      {result.type === 'video' || result.type === 'reel' ? (
-                        <Video className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <ImageIcon className="w-4 h-4 text-green-600" />
+                    <div className="flex flex-wrap items-center gap-4 mt-2">
+                      {result.username && (
+                        <p className="text-green-700 text-sm">
+                          By: @{result.username}
+                        </p>
                       )}
-                      <span className="text-green-600 text-sm font-medium capitalize">
-                        {result.type || 'Media'}
+                      {result.likeCount && (
+                        <p className="text-green-600 text-sm">
+                          ❤️ {result.likeCount.toLocaleString()} likes
+                        </p>
+                      )}
+                      {result.location && (
+                        <p className="text-green-600 text-sm">
+                          📍 {result.location}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Video className="w-4 h-4 text-green-600" />
+                      <span className="text-green-600 text-sm font-medium">
+                        Video • {result.quality} • {result.duration}s
                       </span>
                     </div>
                   </div>
                 </div>
                 
+                {/* Thumbnail Preview */}
                 {result.thumbnail && (
-                  <div className="mb-4 rounded-lg overflow-hidden shadow-md">
+                  <div className="mb-4 rounded-lg overflow-hidden shadow-md bg-gray-100 flex items-center justify-center">
                     <img 
                       src={result.thumbnail} 
                       alt="Preview" 
-                      className="w-full h-auto"
+                      className="max-h-64 w-auto object-contain rounded-lg"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
                     />
                   </div>
                 )}
 
+                {/* Caption */}
                 {result.caption && (
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-3 italic">
-                    "{result.caption}"
-                  </p>
+                  <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
+                    <p className="text-gray-700 text-sm leading-relaxed">
+                      {result.caption}
+                    </p>
+                  </div>
                 )}
                 
-                <button
-                  onClick={() => downloadFile(result.downloadUrl, `instagram_${Date.now()}.mp4`)}
-                  className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
-                >
-                  <Download className="w-5 h-5" />
-                  Download to Device
-                </button>
+                {/* Download Buttons */}
+                <div className="space-y-3">
+                  {/* Main Video Download */}
+                  <button
+                    onClick={() => downloadMedia(result.downloadUrl, 'instagram_reel')}
+                    className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Video ({result.quality})
+                  </button>
+
+                  {/* Audio Download (if available) */}
+                  {result.audioUrl && (
+                    <button
+                      onClick={() => downloadAudio(result.audioUrl)}
+                      className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Volume2 className="w-5 h-5" />
+                      Download Audio Only
+                    </button>
+                  )}
+
+                  {/* Multiple Quality Options */}
+                  {result.allMedia && result.allMedia.filter(media => media.type === 'video').length > 1 && (
+                    <div className="mt-4">
+                      <p className="text-gray-700 text-sm font-semibold mb-2">Other Quality Options:</p>
+                      <div className="space-y-2">
+                        {result.allMedia
+                          .filter(media => media.type === 'video' && media.url !== result.downloadUrl)
+                          .map((media, index) => (
+                            <button
+                              key={media.id || index}
+                              onClick={() => downloadMedia(media.url, `instagram_${media.quality}`)}
+                              className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm"
+                            >
+                              <span>Quality: {media.quality}</span>
+                              <Download className="w-4 h-4" />
+                            </button>
+                          ))
+                        }
+                      </div>
+                    </div>
+                  )}
+
+                  {/* URL Info */}
+                  <div className="p-3 bg-gray-100 rounded-lg mt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-gray-600 font-semibold">Video URL:</p>
+                      <button
+                        onClick={() => copyToClipboard(result.downloadUrl)}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        Copy URL
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-700 break-all">{result.downloadUrl}</p>
+                  </div>
+
+                  <p className="text-xs text-gray-500 text-center mt-2">
+                    💡 If download doesn't start automatically, the media will open in a new tab.
+                    Right-click and select "Save as..." to download.
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -233,7 +392,7 @@ export default function InstaDownloader() {
               </div>
               <div className="flex items-center gap-2 text-gray-700">
                 <span className="text-green-500">✓</span>
-                <span>Stories</span>
+                <span>Audio Extraction</span>
               </div>
               <div className="flex items-center gap-2 text-gray-700">
                 <span className="text-green-500">✓</span>
