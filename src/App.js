@@ -1,11 +1,36 @@
-import React, { useState } from 'react';
-import { Download, Link2, Loader2, CheckCircle, XCircle, Video, Image, RefreshCw, Volume2 } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Download, Link2, Loader2, CheckCircle, XCircle, Video, Image, Volume2 } from 'lucide-react';
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function Toast({ message, type, onClose }) {
+  React.useEffect(() => {
+    const t = setTimeout(onClose, 3500);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  const bg = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+
+  return (
+    <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 ${bg} text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 text-sm font-medium max-w-xs text-center`}>
+      {type === 'success' && <CheckCircle className="w-4 h-4 flex-shrink-0" />}
+      {type === 'error' && <XCircle className="w-4 h-4 flex-shrink-0" />}
+      <span>{message}</span>
+    </div>
+  );
+}
 
 export default function InstaDownloader() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [toast, setToast] = useState(null);
+
+  const showToast = useCallback((message, type = 'info') => {
+    setToast({ message, type });
+  }, []);
+
+  const hideToast = useCallback(() => setToast(null), []);
 
   const validateInstagramUrl = (url) => {
     const instaRegex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|stories|tv)\/([A-Za-z0-9_-]+)/;
@@ -28,7 +53,6 @@ export default function InstaDownloader() {
     setResult(null);
 
     try {
-      // Use the working Instagram Reels Downloader API
       const apiResponse = await fetch(
         `https://instagram-reels-downloader-api.p.rapidapi.com/download?url=${encodeURIComponent(url)}`,
         {
@@ -40,28 +64,21 @@ export default function InstaDownloader() {
         }
       );
 
-      if (!apiResponse.ok) {
-        throw new Error(`API Error: ${apiResponse.status}`);
-      }
+      if (!apiResponse.ok) throw new Error(`API Error: ${apiResponse.status}`);
 
       const data = await apiResponse.json();
       console.log('API Response:', data);
 
-      // Check if the API call was successful
       if (!data.success || data.error) {
         throw new Error(data.message || 'Failed to download content');
       }
 
-      // Parse the response based on the actual structure
       if (data.data && data.data.medias && data.data.medias.length > 0) {
         const mediaData = data.data;
-        
-        // Find video media (primary content)
-        const videoMedia = mediaData.medias.find(media => media.type === 'video');
-        const imageMedia = mediaData.medias.find(media => media.type === 'image' || media.type === 'photo');
-        const audioMedia = mediaData.medias.find(media => media.type === 'audio');
-        
-        // Handle video posts
+        const videoMedia = mediaData.medias.find(m => m.type === 'video');
+        const imageMedia = mediaData.medias.find(m => m.type === 'image' || m.type === 'photo');
+        const audioMedia = mediaData.medias.find(m => m.type === 'audio');
+
         if (videoMedia) {
           setResult({
             downloadUrl: videoMedia.url,
@@ -74,11 +91,9 @@ export default function InstaDownloader() {
             likeCount: mediaData.like_count,
             location: mediaData.location?.name,
             audioUrl: audioMedia?.url,
-            allMedia: mediaData.medias // Store all media for multiple quality options
+            allMedia: mediaData.medias
           });
-        } 
-        // Handle image posts
-        else if (imageMedia) {
+        } else if (imageMedia) {
           setResult({
             downloadUrl: imageMedia.url,
             thumbnail: imageMedia.url || mediaData.thumbnail,
@@ -87,11 +102,9 @@ export default function InstaDownloader() {
             type: 'image',
             likeCount: mediaData.like_count,
             location: mediaData.location?.name,
-            allMedia: mediaData.medias // Store all media for carousel posts
+            allMedia: mediaData.medias
           });
-        } 
-        // Fallback: use first available media
-        else if (mediaData.medias.length > 0) {
+        } else if (mediaData.medias.length > 0) {
           const firstMedia = mediaData.medias[0];
           setResult({
             downloadUrl: firstMedia.url,
@@ -112,130 +125,80 @@ export default function InstaDownloader() {
 
     } catch (err) {
       console.error('Download error:', err);
-      setError(`Failed to download: ${err.message}. Please try again or use a different post.`);
+      setError(`Failed to fetch info: ${err.message}. Please try again.`);
     } finally {
       setLoading(false);
     }
   };
 
-  const getFileExtension = (url, defaultExt = 'mp4') => {
+  const getFileExtension = (rawUrl, defaultExt = 'mp4') => {
     try {
-      // Try to get extension from URL
-      const urlPath = new URL(url).pathname;
+      const urlPath = new URL(rawUrl).pathname;
       const match = urlPath.match(/\.(jpg|jpeg|png|gif|webp|mp4|mp3|mov|avi)$/i);
-      if (match) {
-        return match[1].toLowerCase();
-      }
-      return defaultExt;
+      return match ? match[1].toLowerCase() : defaultExt;
     } catch {
       return defaultExt;
     }
   };
 
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
   const downloadMedia = async (mediaUrl, filename = 'instagram_media', fileExtension = 'mp4') => {
-    // Auto-detect file extension from URL if not provided
-    const ext = fileExtension === 'jpg' || fileExtension === 'mp4' 
-      ? getFileExtension(mediaUrl, fileExtension) 
+    const ext = (fileExtension === 'jpg' || fileExtension === 'mp4')
+      ? getFileExtension(mediaUrl, fileExtension)
       : fileExtension;
-    
+
+    // iOS Safari can't do blob downloads — open in new tab so user can long-press → Save
+    if (isIOS) {
+      window.open(mediaUrl, '_blank', 'noopener,noreferrer');
+      showToast('Tap & hold the media → "Save to Photos" 📸', 'info');
+      return;
+    }
+
+    // Desktop / Android: blob download
     try {
-      // Fetch the file as a blob to avoid popup blockers (especially on iOS)
-      const response = await fetch(mediaUrl, {
-        mode: 'cors',
-        credentials: 'omit'
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch media');
-      }
-      
+      const response = await fetch(mediaUrl, { mode: 'cors', credentials: 'omit' });
+      if (!response.ok) throw new Error('Fetch failed');
+
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
-      
-      // Create a temporary anchor element
       const link = document.createElement('a');
       link.href = blobUrl;
       link.download = `${filename}_${Date.now()}.${ext}`;
       link.style.display = 'none';
-      
-      // Append to body, click, and remove
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      // Clean up the blob URL after a delay
-      setTimeout(() => {
-        window.URL.revokeObjectURL(blobUrl);
-      }, 100);
-      
-      // Show success message
-      setError('');
-      alert('Download started! Check your downloads folder.');
-      
-    } catch (error) {
-      console.error('Download failed:', error);
-      // Fallback: try direct download link (for browsers that support it)
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100);
+      showToast('Download started! Check your downloads folder ✅', 'success');
+
+    } catch (err) {
+      console.error('Blob download failed, trying direct link:', err);
       try {
         const link = document.createElement('a');
         link.href = mediaUrl;
         link.download = `${filename}_${Date.now()}.${ext}`;
-        link.target = '_self'; // Use _self instead of _blank to avoid popup blockers
+        link.target = '_self';
         link.rel = 'noopener noreferrer';
-        
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        
-        alert('Download started! Check your downloads folder.');
-      } catch (fallbackError) {
-        // Final fallback: copy URL to clipboard
+        showToast('Download started! Check your downloads folder ✅', 'success');
+      } catch {
         try {
           await navigator.clipboard.writeText(mediaUrl);
-          alert('Download link copied to clipboard! Paste it in your browser to download.');
-        } catch (clipboardError) {
-          alert('Please long-press the download button and select "Save link as..." to download.');
+          showToast('Link copied! Paste in browser to download 📋', 'info');
+        } catch {
+          showToast('Could not start download. Try opening the link manually.', 'error');
         }
       }
     }
   };
 
-  const downloadAudio = async (audioUrl) => {
-    if (!audioUrl) return;
-    
-    try {
-      const link = document.createElement('a');
-      link.href = audioUrl;
-      link.download = `instagram_audio_${Date.now()}.mp3`;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      alert('Audio download started! Check your downloads folder.');
-    } catch (error) {
-      console.error('Audio download failed:', error);
-      try {
-        await navigator.clipboard.writeText(audioUrl);
-        alert('Audio link copied to clipboard! Paste it in your browser to download.');
-      } catch (clipboardError) {
-        alert('Please long-press the audio button and select "Save link as..." to download.');
-      }
-    }
-  };
-
-  const copyToClipboard = async (text) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert('URL copied to clipboard!');
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4">
+      {toast && <Toast message={toast.message} type={toast.type} onClose={hideToast} />}
+
       <div className="max-w-3xl mx-auto pt-8 md:pt-16">
         {/* Header */}
         <div className="text-center mb-8">
@@ -248,14 +211,13 @@ export default function InstaDownloader() {
           <p className="text-white/95 text-xl font-medium">
             Download posts, reels & stories instantly
           </p>
-          <p className="text-white/80 text-sm mt-2">
-            No ads • No signup • 100% Free
-          </p>
+          <p className="text-white/80 text-sm mt-2">No ads • No signup • 100% Free</p>
         </div>
 
         {/* Main Card */}
         <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-10">
-          {/* Input Section */}
+
+          {/* Input */}
           <div className="mb-6">
             <label className="block text-gray-800 font-semibold mb-3 text-lg">
               Paste Instagram Link
@@ -278,21 +240,15 @@ export default function InstaDownloader() {
                 className="px-8 py-4 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold rounded-xl hover:from-pink-600 hover:to-purple-700 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2 shadow-lg"
               >
                 {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Processing...</span>
-                  </>
+                  <><Loader2 className="w-5 h-5 animate-spin" /><span>Processing...</span></>
                 ) : (
-                  <>
-                    <Download className="w-5 h-5" />
-                    <span>Download</span>
-                  </>
+                  <><Download className="w-5 h-5" /><span>Download</span></>
                 )}
               </button>
             </div>
           </div>
 
-          {/* Error Message */}
+          {/* Error */}
           {error && (
             <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
               <div className="flex items-start gap-3">
@@ -305,7 +261,7 @@ export default function InstaDownloader() {
             </div>
           )}
 
-          {/* Result Section */}
+          {/* Result */}
           {result && (
             <div className="mb-6">
               <div className="p-5 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl">
@@ -314,146 +270,101 @@ export default function InstaDownloader() {
                   <div className="flex-1">
                     <p className="text-green-800 font-bold text-lg">Ready to Download!</p>
                     <div className="flex flex-wrap items-center gap-4 mt-2">
-                      {result.username && (
-                        <p className="text-green-700 text-sm">
-                          By: @{result.username}
-                        </p>
-                      )}
-                      {result.likeCount && (
-                        <p className="text-green-600 text-sm">
-                          ❤️ {result.likeCount.toLocaleString()} likes
-                        </p>
-                      )}
-                      {result.location && (
-                        <p className="text-green-600 text-sm">
-                          📍 {result.location}
-                        </p>
-                      )}
+                      {result.username && <p className="text-green-700 text-sm">By: @{result.username}</p>}
+                      {result.likeCount && <p className="text-green-600 text-sm">❤️ {result.likeCount.toLocaleString()} likes</p>}
+                      {result.location && <p className="text-green-600 text-sm">📍 {result.location}</p>}
                     </div>
                     <div className="flex items-center gap-2 mt-2">
                       {result.type === 'video' ? (
-                        <>
-                          <Video className="w-4 h-4 text-green-600" />
-                          <span className="text-green-600 text-sm font-medium">
-                            Video • {result.quality || 'HD'} • {result.duration || 'N/A'}s
-                          </span>
-                        </>
+                        <><Video className="w-4 h-4 text-green-600" /><span className="text-green-600 text-sm font-medium">Video • {result.quality || 'HD'} • {result.duration || 'N/A'}s</span></>
                       ) : (
-                        <>
-                          <Image className="w-4 h-4 text-green-600" />
-                          <span className="text-green-600 text-sm font-medium">
-                            Image
-                          </span>
-                        </>
+                        <><Image className="w-4 h-4 text-green-600" /><span className="text-green-600 text-sm font-medium">Image</span></>
                       )}
                     </div>
                   </div>
                 </div>
-                
-                {/* Thumbnail Preview */}
+
                 {result.thumbnail && (
                   <div className="mb-4 rounded-lg overflow-hidden shadow-md bg-gray-100 flex items-center justify-center">
-                    <img 
-                      src={result.thumbnail} 
-                      alt="Preview" 
-                      className="max-h-64 w-auto object-contain rounded-lg"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                      }}
-                    />
+                    <img src={result.thumbnail} alt="Preview" className="max-h-64 w-auto object-contain rounded-lg"
+                      onError={(e) => { e.target.style.display = 'none'; }} />
                   </div>
                 )}
 
-                {/* Caption */}
                 {result.caption && (
                   <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
-                    <p className="text-gray-700 text-sm leading-relaxed">
-                      {result.caption}
-                    </p>
+                    <p className="text-gray-700 text-sm leading-relaxed">{result.caption}</p>
                   </div>
                 )}
-                
-                {/* Download Buttons */}
+
+                {/* iOS hint banner */}
+                {isIOS && (
+                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-xs">
+                    📱 <strong>iPhone tip:</strong> Tap Download → media opens in new tab → long-press → <em>Save to Photos</em>
+                  </div>
+                )}
+
                 <div className="space-y-3">
-                  {/* Main Download Button */}
                   {result.type === 'video' ? (
-                    <button
-                      onClick={() => downloadMedia(result.downloadUrl, 'instagram_reel', 'mp4')}
-                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
-                    >
+                    <button onClick={() => downloadMedia(result.downloadUrl, 'instagram_reel', 'mp4')}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg">
                       <Download className="w-5 h-5" />
                       Download Video {result.quality ? `(${result.quality})` : ''}
                     </button>
                   ) : (
-                    <button
-                      onClick={() => downloadMedia(result.downloadUrl, 'instagram_post', getFileExtension(result.downloadUrl, 'jpg'))}
-                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
-                    >
+                    <button onClick={() => downloadMedia(result.downloadUrl, 'instagram_post', getFileExtension(result.downloadUrl, 'jpg'))}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg">
                       <Download className="w-5 h-5" />
                       Download Image
                     </button>
                   )}
 
-                  {/* Audio Download (if available) */}
                   {result.audioUrl && (
-                    <button
-                      onClick={() => downloadMedia(result.audioUrl, 'instagram_audio', 'mp3')}
-                      className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition flex items-center justify-center gap-2"
-                    >
+                    <button onClick={() => downloadMedia(result.audioUrl, 'instagram_audio', 'mp3')}
+                      className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition flex items-center justify-center gap-2">
                       <Volume2 className="w-5 h-5" />
                       Download Audio Only
                     </button>
                   )}
 
-                  {/* Multiple Quality Options for Videos */}
-                  {result.allMedia && result.type === 'video' && result.allMedia.filter(media => media.type === 'video').length > 1 && (
+                  {result.allMedia && result.type === 'video' &&
+                    result.allMedia.filter(m => m.type === 'video').length > 1 && (
                     <div className="mt-4">
                       <p className="text-gray-700 text-sm font-semibold mb-2">Other Quality Options:</p>
                       <div className="space-y-2">
-                        {result.allMedia
-                          .filter(media => media.type === 'video' && media.url !== result.downloadUrl)
+                        {result.allMedia.filter(m => m.type === 'video' && m.url !== result.downloadUrl)
                           .map((media, index) => (
-                            <button
-                              key={media.id || index}
+                            <button key={media.id || index}
                               onClick={() => downloadMedia(media.url, `instagram_${media.quality}`, 'mp4')}
-                              className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm"
-                            >
+                              className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm">
                               <span>Quality: {media.quality}</span>
                               <Download className="w-4 h-4" />
                             </button>
-                          ))
-                        }
+                          ))}
                       </div>
                     </div>
                   )}
 
-                  {/* Multiple Images for Carousel Posts */}
-                  {result.allMedia && result.type === 'image' && result.allMedia.filter(media => media.type === 'image' || media.type === 'photo').length > 1 && (
+                  {result.allMedia && result.type === 'image' &&
+                    result.allMedia.filter(m => m.type === 'image' || m.type === 'photo').length > 1 && (
                     <div className="mt-4">
                       <p className="text-gray-700 text-sm font-semibold mb-2">All Images in Post:</p>
                       <div className="space-y-2">
-                        {result.allMedia
-                          .filter(media => (media.type === 'image' || media.type === 'photo') && media.url !== result.downloadUrl)
+                        {result.allMedia.filter(m => (m.type === 'image' || m.type === 'photo') && m.url !== result.downloadUrl)
                           .map((media, index) => (
-                            <button
-                              key={media.id || index}
+                            <button key={media.id || index}
                               onClick={() => downloadMedia(media.url, `instagram_post_${index + 2}`, getFileExtension(media.url, 'jpg'))}
-                              className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm"
-                            >
+                              className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm">
                               <span>Image {index + 2}</span>
                               <Download className="w-4 h-4" />
                             </button>
-                          ))
-                        }
+                          ))}
                       </div>
                     </div>
                   )}
 
-                  {/* URL Info - Hidden */}
-                  {/* Removed video URL display for cleaner UI */}
-
                   <p className="text-xs text-gray-500 text-center mt-4">
-                    💡 Tip: Downloads work on all devices. If download doesn't start automatically, the link will be copied to your clipboard.
+                    💡 If download doesn't start, the link will be copied to your clipboard automatically.
                   </p>
                 </div>
               </div>
@@ -463,8 +374,7 @@ export default function InstaDownloader() {
           {/* How to Use */}
           <div className="mt-8 pt-6 border-t-2 border-gray-100">
             <h3 className="font-bold text-gray-900 mb-4 text-lg flex items-center gap-2">
-              <span className="text-2xl">📱</span>
-              How to use:
+              <span className="text-2xl">📱</span> How to use:
             </h3>
             <div className="grid md:grid-cols-2 gap-4">
               <div className="flex items-start gap-3 p-3 bg-purple-50 rounded-lg">
@@ -490,30 +400,11 @@ export default function InstaDownloader() {
           <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl">
             <h4 className="font-semibold text-gray-900 mb-3">✨ Features:</h4>
             <div className="grid sm:grid-cols-3 gap-3 text-sm">
-              <div className="flex items-center gap-2 text-gray-700">
-                <span className="text-green-500">✓</span>
-                <span>High Quality</span>
-              </div>
-              <div className="flex items-center gap-2 text-gray-700">
-                <span className="text-green-500">✓</span>
-                <span>No Watermark</span>
-              </div>
-              <div className="flex items-center gap-2 text-gray-700">
-                <span className="text-green-500">✓</span>
-                <span>Fast Download</span>
-              </div>
-              <div className="flex items-center gap-2 text-gray-700">
-                <span className="text-green-500">✓</span>
-                <span>Posts & Reels</span>
-              </div>
-              <div className="flex items-center gap-2 text-gray-700">
-                <span className="text-green-500">✓</span>
-                <span>Audio Extraction</span>
-              </div>
-              <div className="flex items-center gap-2 text-gray-700">
-                <span className="text-green-500">✓</span>
-                <span>100% Free</span>
-              </div>
+              {['High Quality', 'No Watermark', 'Fast Download', 'Posts & Reels', 'Audio Extraction', '100% Free'].map(f => (
+                <div key={f} className="flex items-center gap-2 text-gray-700">
+                  <span className="text-green-500">✓</span><span>{f}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
