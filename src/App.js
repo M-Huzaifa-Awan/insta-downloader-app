@@ -58,8 +58,10 @@ export default function InstaDownloader() {
         
         // Find video media (primary content)
         const videoMedia = mediaData.medias.find(media => media.type === 'video');
+        const imageMedia = mediaData.medias.find(media => media.type === 'image' || media.type === 'photo');
         const audioMedia = mediaData.medias.find(media => media.type === 'audio');
         
+        // Handle video posts
         if (videoMedia) {
           setResult({
             downloadUrl: videoMedia.url,
@@ -74,8 +76,35 @@ export default function InstaDownloader() {
             audioUrl: audioMedia?.url,
             allMedia: mediaData.medias // Store all media for multiple quality options
           });
+        } 
+        // Handle image posts
+        else if (imageMedia) {
+          setResult({
+            downloadUrl: imageMedia.url,
+            thumbnail: imageMedia.url || mediaData.thumbnail,
+            username: mediaData.author || mediaData.owner?.username || '',
+            caption: mediaData.title || '',
+            type: 'image',
+            likeCount: mediaData.like_count,
+            location: mediaData.location?.name,
+            allMedia: mediaData.medias // Store all media for carousel posts
+          });
+        } 
+        // Fallback: use first available media
+        else if (mediaData.medias.length > 0) {
+          const firstMedia = mediaData.medias[0];
+          setResult({
+            downloadUrl: firstMedia.url,
+            thumbnail: firstMedia.thumbnail || firstMedia.url || mediaData.thumbnail,
+            username: mediaData.author || mediaData.owner?.username || '',
+            caption: mediaData.title || '',
+            type: firstMedia.type || 'image',
+            likeCount: mediaData.like_count,
+            location: mediaData.location?.name,
+            allMedia: mediaData.medias
+          });
         } else {
-          throw new Error('No video content found in the response');
+          throw new Error('No media content found in the response');
         }
       } else {
         throw new Error('No media found in the response');
@@ -89,40 +118,84 @@ export default function InstaDownloader() {
     }
   };
 
-  const downloadMedia = async (mediaUrl, filename = 'instagram_video') => {
+  const getFileExtension = (url, defaultExt = 'mp4') => {
     try {
-      // Method 1: Direct download using fetch and blob (for same-origin or CORS-enabled URLs)
-      try {
-        const response = await fetch(mediaUrl);
-        if (response.ok) {
-          const blob = await response.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = `${filename}_${Date.now()}.mp4`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          
-          // Clean up blob URL
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-          return;
-        }
-      } catch (fetchError) {
-        console.log('Direct download failed, trying alternative method...');
+      // Try to get extension from URL
+      const urlPath = new URL(url).pathname;
+      const match = urlPath.match(/\.(jpg|jpeg|png|gif|webp|mp4|mp3|mov|avi)$/i);
+      if (match) {
+        return match[1].toLowerCase();
       }
+      return defaultExt;
+    } catch {
+      return defaultExt;
+    }
+  };
 
-      // Method 2: Open in new tab for user to manually download
-      const newTab = window.open(mediaUrl, '_blank');
-      if (!newTab) {
-        setError('Popup blocked! Please allow popups for this site and try again.');
+  const downloadMedia = async (mediaUrl, filename = 'instagram_media', fileExtension = 'mp4') => {
+    // Auto-detect file extension from URL if not provided
+    const ext = fileExtension === 'jpg' || fileExtension === 'mp4' 
+      ? getFileExtension(mediaUrl, fileExtension) 
+      : fileExtension;
+    
+    try {
+      // Fetch the file as a blob to avoid popup blockers (especially on iOS)
+      const response = await fetch(mediaUrl, {
+        mode: 'cors',
+        credentials: 'omit'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch media');
       }
+      
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      // Create a temporary anchor element
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${filename}_${Date.now()}.${ext}`;
+      link.style.display = 'none';
+      
+      // Append to body, click, and remove
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the blob URL after a delay
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+      }, 100);
+      
+      // Show success message
+      setError('');
+      alert('Download started! Check your downloads folder.');
       
     } catch (error) {
       console.error('Download failed:', error);
-      // Final fallback
-      window.open(mediaUrl, '_blank');
+      // Fallback: try direct download link (for browsers that support it)
+      try {
+        const link = document.createElement('a');
+        link.href = mediaUrl;
+        link.download = `${filename}_${Date.now()}.${ext}`;
+        link.target = '_self'; // Use _self instead of _blank to avoid popup blockers
+        link.rel = 'noopener noreferrer';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        alert('Download started! Check your downloads folder.');
+      } catch (fallbackError) {
+        // Final fallback: copy URL to clipboard
+        try {
+          await navigator.clipboard.writeText(mediaUrl);
+          alert('Download link copied to clipboard! Paste it in your browser to download.');
+        } catch (clipboardError) {
+          alert('Please long-press the download button and select "Save link as..." to download.');
+        }
+      }
     }
   };
 
@@ -130,13 +203,25 @@ export default function InstaDownloader() {
     if (!audioUrl) return;
     
     try {
-      const newTab = window.open(audioUrl, '_blank');
-      if (!newTab) {
-        setError('Popup blocked! Please allow popups to download audio.');
-      }
+      const link = document.createElement('a');
+      link.href = audioUrl;
+      link.download = `instagram_audio_${Date.now()}.mp3`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      alert('Audio download started! Check your downloads folder.');
     } catch (error) {
       console.error('Audio download failed:', error);
-      window.open(audioUrl, '_blank');
+      try {
+        await navigator.clipboard.writeText(audioUrl);
+        alert('Audio link copied to clipboard! Paste it in your browser to download.');
+      } catch (clipboardError) {
+        alert('Please long-press the audio button and select "Save link as..." to download.');
+      }
     }
   };
 
@@ -246,10 +331,21 @@ export default function InstaDownloader() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                      <Video className="w-4 h-4 text-green-600" />
-                      <span className="text-green-600 text-sm font-medium">
-                        Video • {result.quality} • {result.duration}s
-                      </span>
+                      {result.type === 'video' ? (
+                        <>
+                          <Video className="w-4 h-4 text-green-600" />
+                          <span className="text-green-600 text-sm font-medium">
+                            Video • {result.quality || 'HD'} • {result.duration || 'N/A'}s
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Image className="w-4 h-4 text-green-600" />
+                          <span className="text-green-600 text-sm font-medium">
+                            Image
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -279,28 +375,38 @@ export default function InstaDownloader() {
                 
                 {/* Download Buttons */}
                 <div className="space-y-3">
-                  {/* Main Video Download */}
-                  <button
-                    onClick={() => downloadMedia(result.downloadUrl, 'instagram_reel')}
-                    className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
-                  >
-                    <Download className="w-5 h-5" />
-                    Download Video ({result.quality})
-                  </button>
+                  {/* Main Download Button */}
+                  {result.type === 'video' ? (
+                    <button
+                      onClick={() => downloadMedia(result.downloadUrl, 'instagram_reel', 'mp4')}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
+                    >
+                      <Download className="w-5 h-5" />
+                      Download Video {result.quality ? `(${result.quality})` : ''}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => downloadMedia(result.downloadUrl, 'instagram_post', getFileExtension(result.downloadUrl, 'jpg'))}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
+                    >
+                      <Download className="w-5 h-5" />
+                      Download Image
+                    </button>
+                  )}
 
                   {/* Audio Download (if available) */}
                   {result.audioUrl && (
                     <button
-                      onClick={() => downloadAudio(result.audioUrl)}
-                      className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all flex items-center justify-center gap-2"
+                      onClick={() => downloadMedia(result.audioUrl, 'instagram_audio', 'mp3')}
+                      className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition flex items-center justify-center gap-2"
                     >
                       <Volume2 className="w-5 h-5" />
                       Download Audio Only
                     </button>
                   )}
 
-                  {/* Multiple Quality Options */}
-                  {result.allMedia && result.allMedia.filter(media => media.type === 'video').length > 1 && (
+                  {/* Multiple Quality Options for Videos */}
+                  {result.allMedia && result.type === 'video' && result.allMedia.filter(media => media.type === 'video').length > 1 && (
                     <div className="mt-4">
                       <p className="text-gray-700 text-sm font-semibold mb-2">Other Quality Options:</p>
                       <div className="space-y-2">
@@ -309,7 +415,7 @@ export default function InstaDownloader() {
                           .map((media, index) => (
                             <button
                               key={media.id || index}
-                              onClick={() => downloadMedia(media.url, `instagram_${media.quality}`)}
+                              onClick={() => downloadMedia(media.url, `instagram_${media.quality}`, 'mp4')}
                               className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm"
                             >
                               <span>Quality: {media.quality}</span>
@@ -321,23 +427,33 @@ export default function InstaDownloader() {
                     </div>
                   )}
 
-                  {/* URL Info */}
-                  <div className="p-3 bg-gray-100 rounded-lg mt-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs text-gray-600 font-semibold">Video URL:</p>
-                      <button
-                        onClick={() => copyToClipboard(result.downloadUrl)}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                      >
-                        Copy URL
-                      </button>
+                  {/* Multiple Images for Carousel Posts */}
+                  {result.allMedia && result.type === 'image' && result.allMedia.filter(media => media.type === 'image' || media.type === 'photo').length > 1 && (
+                    <div className="mt-4">
+                      <p className="text-gray-700 text-sm font-semibold mb-2">All Images in Post:</p>
+                      <div className="space-y-2">
+                        {result.allMedia
+                          .filter(media => (media.type === 'image' || media.type === 'photo') && media.url !== result.downloadUrl)
+                          .map((media, index) => (
+                            <button
+                              key={media.id || index}
+                              onClick={() => downloadMedia(media.url, `instagram_post_${index + 2}`, getFileExtension(media.url, 'jpg'))}
+                              className="w-full py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition flex items-center justify-between text-sm"
+                            >
+                              <span>Image {index + 2}</span>
+                              <Download className="w-4 h-4" />
+                            </button>
+                          ))
+                        }
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-700 break-all">{result.downloadUrl}</p>
-                  </div>
+                  )}
 
-                  <p className="text-xs text-gray-500 text-center mt-2">
-                    💡 If download doesn't start automatically, the media will open in a new tab.
-                    Right-click and select "Save as..." to download.
+                  {/* URL Info - Hidden */}
+                  {/* Removed video URL display for cleaner UI */}
+
+                  <p className="text-xs text-gray-500 text-center mt-4">
+                    💡 Tip: Downloads work on all devices. If download doesn't start automatically, the link will be copied to your clipboard.
                   </p>
                 </div>
               </div>
